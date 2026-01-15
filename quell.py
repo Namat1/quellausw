@@ -2,6 +2,12 @@
 # Streamlit: Excel Upload -> Standalone interaktive HTML (alles läuft in der HTML)
 # Excel: Blatt "Direkt", Spalten A–L
 # A CSB | B SAP | C Marktname | D Straße | E PLZ | F Ort | G–L Mo–Sa (Tournummern)
+#
+# Feiertagsregel:
+# - Grundprinzip: Wenn ein Tag als Feiertag markiert ist -> keine Belieferung an diesem Tag.
+#   Betroffene Kunden/Lieferungen werden PRINCIPIell vorher beliefert (rückwärts verschoben).
+# - Ausnahme: Ist der Feiertag Montag -> wird auf Dienstag geschoben (vorwärts).
+# - Zusätzlich: Mindestabstand je Markt (minGapDays) wird eingehalten, sonst Konflikt.
 
 import json
 from typing import Any, Dict, List
@@ -56,7 +62,6 @@ def build_data(df: pd.DataFrame) -> Dict[str, Any]:
         zipc = norm_str(r.iloc[4])
         city = norm_str(r.iloc[5])
 
-        # komplett leere Zeile überspringen
         if not (csb or sap or name):
             continue
 
@@ -125,8 +130,8 @@ HTML_TEMPLATE = r"""<!doctype html>
   table.matrix { border-collapse: separate; border-spacing:0; width: 100%; font-size: 13px; }
   table.matrix th, table.matrix td { padding:8px 10px; border-bottom:1px solid #eee; border-right:1px solid #f0f0f0; white-space:nowrap; vertical-align:top; }
   table.matrix th { position: sticky; top: 0; background: #fafafa; z-index: 3; }
-  table.matrix td.market { position: sticky; left: 0; background:#fff; z-index: 2; border-right:1px solid #e6e6e6; min-width: 260px; }
-  table.matrix th.marketH { position: sticky; left:0; z-index: 4; background:#fafafa; border-right:1px solid #e6e6e6; min-width: 260px; }
+  table.matrix td.market { position: sticky; left: 0; background:#fff; z-index: 2; border-right:1px solid #e6e6e6; min-width: 280px; }
+  table.matrix th.marketH { position: sticky; left:0; z-index: 4; background:#fafafa; border-right:1px solid #e6e6e6; min-width: 280px; }
   .tourCell { display:flex; gap:6px; align-items:center; justify-content:space-between; }
   .tourNum { font-weight:800; }
   .empty { color:#bbb; }
@@ -187,6 +192,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     </div>
 
     <div class="muted small" style="margin-top:8px">
+      Regeln: Feiertag = keine Lieferung. Normal: vorher liefern (rückwärts). Ausnahme: Feiertag Montag → auf Dienstag schieben.
       Farben: <span class="pill">Feiertag = rot</span> <span class="pill">verschoben = grün</span>
     </div>
   </div>
@@ -216,8 +222,8 @@ HTML_TEMPLATE = r"""<!doctype html>
       <div class="box">
         <div class="muted small">
           <b>Hinweis:</b><br/>
-          Diese Version verschiebt Feiertage rückwärts („davor liefern“) innerhalb der KW.
-          Wenn Mindestabstand nicht einhaltbar ist → Konflikt.
+          Diese Version verschiebt innerhalb der KW. (Vorwoche ist NICHT erlaubt.)<br/>
+          Wenn Mindestabstand je Markt nicht einhaltbar ist → Konflikt.
         </div>
       </div>
     </div>
@@ -259,7 +265,6 @@ function weekdayName(d){
   return ["So","Mo","Di","Mi","Do","Fr","Sa"][d.getDay()];
 }
 function weekRange(d){
-  // JS getDay(): So=0..Sa=6
   const dow = d.getDay();
   let start;
   if (weekStartsSunday){
@@ -370,7 +375,36 @@ function planForWeek(){
     return true;
   }
 
-  // Feiertage rückwärts verschieben
+  // Zieltag finden nach deiner Regel:
+  // - Montag-Feiertag: vorwärts (Di, Mi, ...)
+  // - sonst: rückwärts (vorher liefern)
+  function findTargetDateISO(baseDate, direction, marketOrItems){
+    let target = addDays(baseDate, direction);
+
+    while (target >= wr.start && target <= wr.end){
+      const tISO = iso(target);
+
+      // nicht auf Feiertag
+      if (state.holidays.has(tISO)) { target = addDays(target, direction); continue; }
+
+      // Gap-Check
+      if (Array.isArray(marketOrItems)){
+        let ok = true;
+        for (const it of marketOrItems){
+          if (!canPlace(it.market, tISO)) { ok = false; break; }
+        }
+        if (ok) return tISO;
+      } else {
+        if (canPlace(marketOrItems.market, tISO)) return tISO;
+      }
+
+      target = addDays(target, direction);
+    }
+
+    return null;
+  }
+
+  // Feiertage verschieben
   for (const d of days){
     const dayISO = iso(d);
     if (!state.holidays.has(dayISO)) continue;
@@ -378,7 +412,11 @@ function planForWeek(){
     const items = deliveries.get(dayISO) || [];
     if (!items.length) continue;
 
+    // Feiertag: keine Lieferung am Tag selbst
     deliveries.set(dayISO, []);
+
+    const isMondayHoliday = (d.getDay() === 1);  // Mo
+    const dir = isMondayHoliday ? +1 : -1;       // Mo -> vorwärts, sonst rückwärts
 
     if (state.tourTogether){
       // Touren gruppieren
@@ -389,28 +427,13 @@ function planForWeek(){
       }
 
       for (const [tour, gitems] of groups.entries()){
-        let target = addDays(d, -1);
-        let targetISO = null;
-
-        while (target >= wr.start){
-          const tISO = iso(target);
-          if (state.holidays.has(tISO)) { target = addDays(target, -1); continue; }
-
-          let ok = true;
-          for (const it of gitems){
-            if (!canPlace(it.market, tISO)){
-              ok = false; break;
-            }
-          }
-          if (ok){ targetISO = tISO; break; }
-          target = addDays(target, -1);
-        }
+        const targetISO = findTargetDateISO(d, dir, gitems);
 
         if (!targetISO){
           for (const it of gitems){
             conflicts.push({
               type: "GAP_OR_RANGE",
-              msg: `Kann ${it.market.name} (${it.market.city}) von ${dayISO} nicht nach vorne ziehen (Tour ${tour}) ohne Abstand < ${minGapDays} Tage oder außerhalb der KW.`,
+              msg: `Kann ${it.market.name} (${it.market.city}) von ${dayISO} nicht verschieben (Tour ${tour}). Regel: ${isMondayHoliday ? "Mo → Di" : "vorher"}. Mindestabstand: ${minGapDays} Tage.`,
               market: it.market, tour: it.tour, from: dayISO
             });
           }
@@ -425,23 +448,12 @@ function planForWeek(){
     } else {
       // itemweise
       for (const it of items){
-        let target = addDays(d, -1);
-        let targetISO = null;
-
-        while (target >= wr.start){
-          const tISO = iso(target);
-          if (state.holidays.has(tISO)) { target = addDays(target, -1); continue; }
-
-          if (canPlace(it.market, tISO)){
-            targetISO = tISO; break;
-          }
-          target = addDays(target, -1);
-        }
+        const targetISO = findTargetDateISO(d, dir, it);
 
         if (!targetISO){
           conflicts.push({
             type: "GAP_OR_RANGE",
-            msg: `Kann ${it.market.name} (${it.market.city}) von ${dayISO} nicht nach vorne ziehen ohne Abstand < ${minGapDays} Tage oder außerhalb der KW.`,
+            msg: `Kann ${it.market.name} (${it.market.city}) von ${dayISO} nicht verschieben. Regel: ${isMondayHoliday ? "Mo → Di" : "vorher"}. Mindestabstand: ${minGapDays} Tage.`,
             market: it.market, tour: it.tour, from: dayISO
           });
           continue;
@@ -550,7 +562,6 @@ function renderMatrix(plan, q){
     return hay.includes(q);
   });
 
-  // Body
   const tbody = document.createElement("tbody");
 
   for (const m of markets){
@@ -578,7 +589,7 @@ function renderMatrix(plan, q){
         td.innerHTML = `
           <div class="tourCell">
             <span class="tourNum">${tour}</span>
-            ${movedFrom ? `<span class="badge">← ${movedFrom.slice(8,10)}.${movedFrom.slice(5,7)}</span>` : ``}
+            ${movedFrom ? `<span class="badge">${movedFrom.slice(0,10)} →</span>` : ``}
           </div>
         `;
       }
