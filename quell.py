@@ -1,10 +1,9 @@
 # quell.py
 # Streamlit: Excel Upload -> Standalone interaktive HTML (alles läuft in der HTML)
-# Excel: Blatt "Direkt", Zeilen 1–99, Spalten A–L
+# Excel: Blatt "Direkt", Spalten A–L
 # A CSB | B SAP | C Marktname | D Straße | E PLZ | F Ort | G–L Mo–Sa (Tournummern)
 
 import json
-from datetime import date
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -26,8 +25,7 @@ uploaded = st.file_uploader("Excel-Datei auswählen", type=["xlsx", "xlsm", "xls
 def norm_str(x: Any) -> str:
     if pd.isna(x):
         return ""
-    s = str(x).strip()
-    return s
+    return str(x).strip()
 
 
 def norm_tour(x: Any) -> str:
@@ -40,11 +38,17 @@ def norm_tour(x: Any) -> str:
     return s
 
 
-def build_data(df: pd.DataFrame, *, max_rows: int = 99) -> Dict[str, Any]:
-    # Zeilen 1–99 laut User (wir interpretieren: erste 99 Datenzeilen im Blatt)
-    df = df.iloc[0:max_rows].copy()
-
+def build_data(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Liest ALLE Zeilen aus dem Excel-Blatt ein.
+    Leere Zeilen werden übersprungen.
+    """
     markets: List[Dict[str, Any]] = []
+
+    # Sicherstellen: mindestens 12 Spalten (A–L)
+    if df.shape[1] < 12:
+        raise ValueError("Excel-Blatt hat weniger als 12 Spalten (A–L).")
+
     for _, r in df.iterrows():
         # Spalten A–L => iloc 0..11
         csb = norm_str(r.iloc[0])
@@ -204,7 +208,7 @@ const minGapDays = Number((DATA.meta && DATA.meta.minGapDays) || 3);
 // --------- state ----------
 const state = {
   date: null,
-  holidays: new Set(),   // ISO date strings der aktuellen Woche
+  holidays: new Set(),
   view: "tour",
   q: "",
   tourTogether: false,
@@ -221,14 +225,12 @@ function parseISO(s){
 function addDays(d, n){
   const x = new Date(d);
   x.setDate(x.getDate() + n);
-  // normalisieren auf 00:00
   return new Date(x.getFullYear(), x.getMonth(), x.getDate());
 }
 function weekdayName(d){
   return ["So","Mo","Di","Mi","Do","Fr","Sa"][d.getDay()];
 }
 function weekRange(d){
-  // JS getDay(): So=0..Sa=6
   const dow = d.getDay();
   let start;
   if (weekStartsSunday){
@@ -240,8 +242,6 @@ function weekRange(d){
   const end = addDays(start, 6);
   return {start, end};
 }
-
-// ISO week number (Anzeige)
 function isoWeekNumber(date){
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const dayNum = d.getUTCDay() || 7;
@@ -250,7 +250,6 @@ function isoWeekNumber(date){
   const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
   return {year: d.getUTCFullYear(), week: weekNo};
 }
-
 function daterange(start, end){
   const out = [];
   let cur = new Date(start);
@@ -260,14 +259,11 @@ function daterange(start, end){
   }
   return out;
 }
-
 function getPatternForDow(market, dowJS){
-  // Muster aus Excel: Mo–Sa; Sonntag = kein Plan
   const map = {1:"mo",2:"di",3:"mi",4:"do",5:"fr",6:"sa"};
   const k = map[dowJS];
   return k ? (market.pattern[k] || "") : "";
 }
-
 function diffDays(aISO, bISO){
   const a = parseISO(aISO);
   const b = parseISO(bISO);
@@ -299,7 +295,6 @@ function buildWeekDaysUI(){
 }
 
 function marketIdInit(){
-  // stabile IDs vergeben
   (DATA.markets || []).forEach((m, idx) => { m._id = idx; });
 }
 
@@ -307,12 +302,9 @@ function planForWeek(){
   const wr = weekRange(state.date);
   const days = daterange(wr.start, wr.end);
 
-  // deliveries: Map(dateISO -> Array of items)
-  // item: { market, tour, originalDate }
   const deliveries = new Map();
   days.forEach(d => deliveries.set(iso(d), []));
 
-  // Rohplan
   for (const m of (DATA.markets || [])){
     for (const d of days){
       const tour = getPatternForDow(m, d.getDay());
@@ -322,9 +314,7 @@ function planForWeek(){
     }
   }
 
-  // moved: {from,to, market, tour}
   const moved = [];
-  // conflicts: {type, msg, market, tour, from}
   const conflicts = [];
 
   function getExistingDatesForMarket(mid){
@@ -347,9 +337,6 @@ function planForWeek(){
     return true;
   }
 
-  // Verschiebe-Strategie:
-  // - Wenn "tourTogether": für jeden Feiertag gruppieren wir pro Tour und versuchen pro Tour gemeinsam zu schieben.
-  // - Sonst: itemweise.
   for (const d of days){
     const dayISO = iso(d);
     if (!state.holidays.has(dayISO)) continue;
@@ -357,11 +344,9 @@ function planForWeek(){
     const items = deliveries.get(dayISO) || [];
     if (!items.length) continue;
 
-    // Feiertag: erst entfernen
     deliveries.set(dayISO, []);
 
     if (state.tourTogether){
-      // gruppiere nach Tour
       const groups = new Map();
       for (const it of items){
         if (!groups.has(it.tour)) groups.set(it.tour, []);
@@ -376,7 +361,6 @@ function planForWeek(){
           const tISO = iso(target);
           if (state.holidays.has(tISO)) { target = addDays(target, -1); continue; }
 
-          // Tour zusammenhalten: alle Items müssen platzierbar sein
           let ok = true;
           for (const it of gitems){
             if (!canPlace(it.market, tISO)){
@@ -406,7 +390,6 @@ function planForWeek(){
         }
       }
     } else {
-      // itemweise
       for (const it of items){
         let target = addDays(d, -1);
         let targetISO = null;
@@ -449,11 +432,6 @@ function renderSummary(plan){
     <div>Feiertage markiert: <b>${state.holidays.size}</b></div>
     <div>Verschoben: <b>${plan.moved.length}</b></div>
     <div>Konflikte: <b class="${plan.conflicts.length ? "bad":"ok"}">${plan.conflicts.length}</b></div>
-    <div class="hr"></div>
-    <div class="small muted">
-      Logik: Feiertage werden rückwärts verschoben („davor liefern“). Mindestabstand je Markt: ${minGapDays} Tage.
-      Wenn nicht möglich innerhalb dieser KW ⇒ Konflikt.
-    </div>
   `;
 }
 
@@ -530,7 +508,6 @@ function renderTours(plan, q){
       return hay.includes(q);
     });
 
-    // group by tour
     const byTour = new Map();
     for (const it of filtered){
       if (!byTour.has(it.tour)) byTour.set(it.tour, []);
@@ -601,7 +578,7 @@ function init(){
 
   el("datePick").addEventListener("change", (e) => {
     state.date = parseISO(e.target.value);
-    state.holidays.clear(); // Feiertage pro KW neu setzen
+    state.holidays.clear();
     render();
   });
 
@@ -637,7 +614,6 @@ init();
 
 def render_html(data: Dict[str, Any]) -> str:
     payload_json = json.dumps(data, ensure_ascii=False)
-    # WICHTIG: kein f-string! Nur Replace -> keine {} Probleme
     return HTML_TEMPLATE.replace("__DATA__", payload_json)
 
 
@@ -651,7 +627,7 @@ if uploaded:
         st.error(f"Excel konnte nicht gelesen werden: {e}")
         st.stop()
 
-    data = build_data(df, max_rows=99)
+    data = build_data(df)
     html = render_html(data)
 
     st.success(f"{len(data['markets'])} Märkte geladen. HTML bereit.")
