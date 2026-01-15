@@ -32,7 +32,7 @@ def norm_tour(x: Any) -> str:
     if pd.isna(x):
         return ""
     s = str(x).strip()
-    # Häufig: 1201.0 -> 1201
+    # häufig: 1201.0 -> 1201
     if s.endswith(".0"):
         s = s[:-2]
     return s
@@ -45,12 +45,10 @@ def build_data(df: pd.DataFrame) -> Dict[str, Any]:
     """
     markets: List[Dict[str, Any]] = []
 
-    # Sicherstellen: mindestens 12 Spalten (A–L)
     if df.shape[1] < 12:
         raise ValueError("Excel-Blatt hat weniger als 12 Spalten (A–L).")
 
     for _, r in df.iterrows():
-        # Spalten A–L => iloc 0..11
         csb = norm_str(r.iloc[0])
         sap = norm_str(r.iloc[1])
         name = norm_str(r.iloc[2])
@@ -58,7 +56,7 @@ def build_data(df: pd.DataFrame) -> Dict[str, Any]:
         zipc = norm_str(r.iloc[4])
         city = norm_str(r.iloc[5])
 
-        # Leere Zeilen überspringen
+        # komplett leere Zeile überspringen
         if not (csb or sap or name):
             continue
 
@@ -85,7 +83,7 @@ def build_data(df: pd.DataFrame) -> Dict[str, Any]:
 
     return {
         "meta": {
-            # Wenn du es fest willst: True (So–Sa)
+            # feste Logik: Woche beginnt Sonntag (So–Sa)
             "weekStartsSunday": True,
             "minGapDays": 3,
         },
@@ -101,55 +99,76 @@ HTML_TEMPLATE = r"""<!doctype html>
 <title>Belieferungsschema – Interaktiv</title>
 <style>
   body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 16px; background:#f4f5f7; }
-  .wrap { max-width: 1200px; margin: 0 auto; }
+  .wrap { max-width: 1400px; margin: 0 auto; }
   .card { background:#fff; border:1px solid #ddd; border-radius:14px; padding:14px; box-shadow: 0 2px 10px rgba(0,0,0,.04); }
   .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
   .grow { flex:1; }
   input, select, button { padding:10px 12px; border-radius:10px; border:1px solid #ccc; background:#fff; }
   button { cursor:pointer; }
-  .grid7 { display:grid; grid-template-columns: repeat(7, 1fr); gap:10px; }
-  .daybtn { padding:10px; border-radius:12px; border:1px solid #ccc; background:#fff; text-align:center; user-select:none; cursor:pointer; }
-  .holiday { border-color:#d33; background: #ffecec; }
   .muted { color:#666; font-size: 13px; }
   .h2 { font-size:18px; margin: 8px 0; }
   .pill { display:inline-block; padding:4px 10px; border-radius:999px; border:1px solid #ddd; background:#fafafa; font-size:12px; }
-  .split { display:grid; grid-template-columns: 1.1fr .9fr; gap:12px; }
-  @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
-  .list { display:flex; flex-direction:column; gap:10px; }
-  .box { border:1px solid #e3e3e3; border-radius:12px; padding:10px; }
-  .boxhead { display:flex; justify-content:space-between; align-items:center; gap:10px; }
-  .bad { color:#b00; }
-  .ok { color:#0a6; }
-  .small { font-size:12px; }
   .tag { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; border:1px solid #ddd; background:#fff; font-size:12px; }
   .tag input { margin:0; }
   .hr { height:1px; background:#eee; margin:10px 0; }
+  .bad { color:#b00; }
+  .ok { color:#0a6; }
+  .small { font-size:12px; }
+
+  /* Feiertage Buttons */
+  .grid7 { display:grid; grid-template-columns: repeat(7, 1fr); gap:10px; }
+  .daybtn { padding:10px; border-radius:12px; border:1px solid #ccc; background:#fff; text-align:center; user-select:none; cursor:pointer; }
+  .holiday { border-color:#d33; background: #ffecec; }
+
+  /* Matrix */
+  .matrixWrap { overflow:auto; max-height: 72vh; border:1px solid #e3e3e3; border-radius:12px; background:#fff; }
+  table.matrix { border-collapse: separate; border-spacing:0; width: 100%; font-size: 13px; }
+  table.matrix th, table.matrix td { padding:8px 10px; border-bottom:1px solid #eee; border-right:1px solid #f0f0f0; white-space:nowrap; vertical-align:top; }
+  table.matrix th { position: sticky; top: 0; background: #fafafa; z-index: 3; }
+  table.matrix td.market { position: sticky; left: 0; background:#fff; z-index: 2; border-right:1px solid #e6e6e6; min-width: 260px; }
+  table.matrix th.marketH { position: sticky; left:0; z-index: 4; background:#fafafa; border-right:1px solid #e6e6e6; min-width: 260px; }
+  .tourCell { display:flex; gap:6px; align-items:center; justify-content:space-between; }
+  .tourNum { font-weight:800; }
+  .empty { color:#bbb; }
+  .holidayCell { background:#ffecec; }
+  .movedIn { background:#eafff0; }
+  .badge { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid #ddd; background:#fff; }
+
+  /* rechte Seite */
+  .split { display:grid; grid-template-columns: 1.25fr .75fr; gap:12px; }
+  @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+
+  .box { border:1px solid #e3e3e3; border-radius:12px; padding:10px; background:#fff; }
 </style>
 </head>
 <body>
 <div class="wrap">
+
   <div class="card">
     <div class="row">
       <div class="grow">
-        <div class="h2">Belieferungsschema (Standalone HTML)</div>
-        <div class="muted">KW wählen, Feiertage anklicken – Plan wird direkt neu berechnet (ohne Streamlit).</div>
+        <div class="h2">Belieferungsschema – Übersicht (Alles auf einen Blick)</div>
+        <div class="muted">Datum wählen → KW wird angezeigt → Feiertage anklicken → Matrix aktualisiert sich sofort.</div>
       </div>
+
       <div>
         <label class="muted">Datum in KW</label><br/>
         <input id="datePick" type="date"/>
       </div>
+
       <div>
         <label class="muted">Suche</label><br/>
         <input id="q" placeholder="Markt / Ort / CSB / SAP / Tour…"/>
       </div>
+
       <div>
         <label class="muted">Ansicht</label><br/>
         <select id="view">
-          <option value="tour">Touren</option>
-          <option value="market">Märkte</option>
+          <option value="matrix" selected>Matrix (Übersicht)</option>
           <option value="conflicts">Konflikte</option>
         </select>
       </div>
+
       <div>
         <label class="muted">Feiertage</label><br/>
         <button id="clearH">Feiertage löschen</button>
@@ -163,13 +182,12 @@ HTML_TEMPLATE = r"""<!doctype html>
 
       <span class="tag">
         <input type="checkbox" id="modeTourTogether"/>
-        <label for="modeTourTogether">Touren zusammenhalten (weniger Splits)</label>
+        <label for="modeTourTogether">Touren zusammenhalten</label>
       </span>
     </div>
 
     <div class="muted small" style="margin-top:8px">
-      Modus-Hinweis: „Touren zusammenhalten“ verschiebt am Feiertag möglichst komplette Tourgruppen rückwärts.
-      Wenn Abstände &ge; Mindestabstand nicht einhaltbar sind, wird ein Konflikt erzeugt.
+      Farben: <span class="pill">Feiertag = rot</span> <span class="pill">verschoben = grün</span>
     </div>
   </div>
 
@@ -179,7 +197,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     <div class="h2">Feiertage in dieser Woche</div>
     <div id="weekDays" class="grid7"></div>
     <div class="muted" style="margin-top:8px">
-      Klick auf Tag = Feiertag an/aus (nur für die aktuell gewählte Woche).
+      Klick auf Tag = Feiertag an/aus (nur für die aktuell gewählte KW).
     </div>
   </div>
 
@@ -187,14 +205,24 @@ HTML_TEMPLATE = r"""<!doctype html>
 
   <div class="split">
     <div class="card">
-      <div class="h2" id="leftTitle">Ergebnis</div>
-      <div id="left" class="list"></div>
+      <div class="h2" id="leftTitle">Matrix</div>
+      <div id="left"></div>
     </div>
+
     <div class="card">
       <div class="h2">Zusammenfassung</div>
       <div id="summary" class="muted"></div>
+      <div class="hr"></div>
+      <div class="box">
+        <div class="muted small">
+          <b>Hinweis:</b><br/>
+          Diese Version verschiebt Feiertage rückwärts („davor liefern“) innerhalb der KW.
+          Wenn Mindestabstand nicht einhaltbar ist → Konflikt.
+        </div>
+      </div>
     </div>
   </div>
+
 </div>
 
 <script>
@@ -208,8 +236,8 @@ const minGapDays = Number((DATA.meta && DATA.meta.minGapDays) || 3);
 // --------- state ----------
 const state = {
   date: null,
-  holidays: new Set(),
-  view: "tour",
+  holidays: new Set(),   // ISO date strings der aktuellen Woche
+  view: "matrix",
   q: "",
   tourTogether: false,
 };
@@ -231,6 +259,7 @@ function weekdayName(d){
   return ["So","Mo","Di","Mi","Do","Fr","Sa"][d.getDay()];
 }
 function weekRange(d){
+  // JS getDay(): So=0..Sa=6
   const dow = d.getDay();
   let start;
   if (weekStartsSunday){
@@ -260,6 +289,7 @@ function daterange(start, end){
   return out;
 }
 function getPatternForDow(market, dowJS){
+  // Muster aus Excel: Mo–Sa; Sonntag = kein Plan
   const map = {1:"mo",2:"di",3:"mi",4:"do",5:"fr",6:"sa"};
   const k = map[dowJS];
   return k ? (market.pattern[k] || "") : "";
@@ -302,9 +332,12 @@ function planForWeek(){
   const wr = weekRange(state.date);
   const days = daterange(wr.start, wr.end);
 
+  // deliveries: Map(dateISO -> Array of items)
+  // item: { market, tour, originalDate }
   const deliveries = new Map();
   days.forEach(d => deliveries.set(iso(d), []));
 
+  // Rohplan aus Muster
   for (const m of (DATA.markets || [])){
     for (const d of days){
       const tour = getPatternForDow(m, d.getDay());
@@ -314,8 +347,8 @@ function planForWeek(){
     }
   }
 
-  const moved = [];
-  const conflicts = [];
+  const moved = [];      // {from,to, market, tour}
+  const conflicts = [];  // {type, msg, market, tour, from}
 
   function getExistingDatesForMarket(mid){
     const out = [];
@@ -337,6 +370,7 @@ function planForWeek(){
     return true;
   }
 
+  // Feiertage rückwärts verschieben
   for (const d of days){
     const dayISO = iso(d);
     if (!state.holidays.has(dayISO)) continue;
@@ -347,6 +381,7 @@ function planForWeek(){
     deliveries.set(dayISO, []);
 
     if (state.tourTogether){
+      // Touren gruppieren
       const groups = new Map();
       for (const it of items){
         if (!groups.has(it.tour)) groups.set(it.tour, []);
@@ -367,9 +402,7 @@ function planForWeek(){
               ok = false; break;
             }
           }
-          if (ok){
-            targetISO = tISO; break;
-          }
+          if (ok){ targetISO = tISO; break; }
           target = addDays(target, -1);
         }
 
@@ -390,6 +423,7 @@ function planForWeek(){
         }
       }
     } else {
+      // itemweise
       for (const it of items){
         let target = addDays(d, -1);
         let targetISO = null;
@@ -451,100 +485,119 @@ function renderConflicts(plan, q){
     const div = document.createElement("div");
     div.className = "box";
     div.innerHTML = `
-      <div class="boxhead">
-        <div><b class="bad">Konflikt</b> – Tour ${c.tour}</div>
-        <div class="pill">${c.from}</div>
-      </div>
+      <div><b class="bad">Konflikt</b> – Tour <b>${c.tour}</b></div>
+      <div class="muted small">${c.from}</div>
       <div class="muted">${c.msg}</div>
     `;
     root.appendChild(div);
   }
 }
 
-function renderMarkets(q){
+function renderMatrix(plan, q){
   const root = el("left");
   root.innerHTML = "";
 
-  const ms = (DATA.markets || []).filter(m => {
+  // movedIn[dateISO][marketId] = fromDateISO
+  const movedIn = new Map();
+  for (const mv of plan.moved){
+    if (!movedIn.has(mv.to)) movedIn.set(mv.to, new Map());
+    movedIn.get(mv.to).set(mv.market._id, mv.from);
+  }
+
+  const wrap = document.createElement("div");
+  wrap.className = "matrixWrap";
+
+  const t = document.createElement("table");
+  t.className = "matrix";
+
+  const days = plan.days;
+
+  // Header
+  const thead = document.createElement("thead");
+  const hr = document.createElement("tr");
+
+  const th0 = document.createElement("th");
+  th0.className = "marketH";
+  th0.textContent = "Markt";
+  hr.appendChild(th0);
+
+  for (const d of days){
+    const dk = iso(d);
+    const th = document.createElement("th");
+    th.textContent = `${weekdayName(d)} ${d.toLocaleDateString('de-DE')}${state.holidays.has(dk) ? " (FT)" : ""}`;
+    hr.appendChild(th);
+  }
+
+  thead.appendChild(hr);
+  t.appendChild(thead);
+
+  // Precompute day->market->tour
+  const dayMarketTour = new Map();
+  for (const d of days){
+    const dk = iso(d);
+    const map = new Map();
+    const arr = plan.deliveries.get(dk) || [];
+    for (const it of arr){
+      map.set(it.market._id, it.tour);
+    }
+    dayMarketTour.set(dk, map);
+  }
+
+  // Markets filter
+  const markets = (DATA.markets || []).filter(m => {
     if (!q) return true;
     const hay = (m.name+" "+m.city+" "+m.csb+" "+m.sap).toLowerCase();
     return hay.includes(q);
   });
 
-  for (const m of ms){
-    const p = m.pattern || {};
-    const div = document.createElement("div");
-    div.className = "box";
-    div.innerHTML = `
-      <div class="boxhead">
-        <div><b>${m.name}</b> <span class="muted">(${m.city})</span></div>
-        <div class="pill">CSB ${m.csb} · SAP ${m.sap}</div>
-      </div>
-      <div class="muted">${m.street}, ${m.zip} ${m.city}</div>
-      <div style="margin-top:8px" class="row">
-        <span class="pill">Mo: <b>${p.mo || "-"}</b></span>
-        <span class="pill">Di: <b>${p.di || "-"}</b></span>
-        <span class="pill">Mi: <b>${p.mi || "-"}</b></span>
-        <span class="pill">Do: <b>${p.do || "-"}</b></span>
-        <span class="pill">Fr: <b>${p.fr || "-"}</b></span>
-        <span class="pill">Sa: <b>${p.sa || "-"}</b></span>
-      </div>
-    `;
-    root.appendChild(div);
-  }
-}
+  // Body
+  const tbody = document.createElement("tbody");
 
-function renderTours(plan, q){
-  const root = el("left");
-  root.innerHTML = "";
+  for (const m of markets){
+    const tr = document.createElement("tr");
 
-  for (const d of plan.days){
-    const dk = iso(d);
-    const arr = plan.deliveries.get(dk) || [];
+    const tdM = document.createElement("td");
+    tdM.className = "market";
+    tdM.innerHTML = `<div><b>${m.name}</b></div><div class="muted small">${m.city} · CSB ${m.csb} · SAP ${m.sap}</div>`;
+    tr.appendChild(tdM);
 
-    const filtered = arr.filter(it => {
-      if (!q) return true;
-      const hay = (it.market.name+" "+it.market.city+" "+it.market.csb+" "+it.market.sap+" "+it.tour).toLowerCase();
-      return hay.includes(q);
-    });
+    for (const d of days){
+      const dk = iso(d);
+      const td = document.createElement("td");
 
-    const byTour = new Map();
-    for (const it of filtered){
-      if (!byTour.has(it.tour)) byTour.set(it.tour, []);
-      byTour.get(it.tour).push(it);
+      if (state.holidays.has(dk)) td.classList.add("holidayCell");
+
+      const tour = (dayMarketTour.get(dk) || new Map()).get(m._id) || "";
+      const movedFrom = movedIn.get(dk)?.get(m._id);
+
+      if (movedFrom) td.classList.add("movedIn");
+
+      if (!tour){
+        td.innerHTML = `<span class="empty">–</span>`;
+      } else {
+        td.innerHTML = `
+          <div class="tourCell">
+            <span class="tourNum">${tour}</span>
+            ${movedFrom ? `<span class="badge">← ${movedFrom.slice(8,10)}.${movedFrom.slice(5,7)}</span>` : ``}
+          </div>
+        `;
+      }
+
+      tr.appendChild(td);
     }
 
-    const dayBox = document.createElement("div");
-    dayBox.className = "box";
-    dayBox.innerHTML = `
-      <div class="boxhead">
-        <div><b>${weekdayName(d)} ${d.toLocaleDateString('de-DE')}</b>${state.holidays.has(dk) ? ' <span class="bad">(Feiertag)</span>' : ''}</div>
-        <div class="pill">Stops: ${filtered.length}</div>
-      </div>
-      <div class="muted small">Touren: ${byTour.size}</div>
-      <div class="list" style="margin-top:10px" id="inner_${dk.replaceAll("-","_")}"></div>
-    `;
-    root.appendChild(dayBox);
-
-    const inner = dayBox.querySelector("#inner_"+dk.replaceAll("-","_"));
-    for (const [tour, items] of [...byTour.entries()].sort((a,b)=>String(a[0]).localeCompare(String(b[0])))){
-      const tdiv = document.createElement("div");
-      tdiv.className = "box";
-      tdiv.innerHTML = `
-        <div class="boxhead">
-          <div><b>Tour ${tour}</b></div>
-          <div class="pill">${items.length} Märkte</div>
-        </div>
-        <div class="muted small">${items.map(x => x.market.name + " ("+x.market.city+")").join(" · ")}</div>
-      `;
-      inner.appendChild(tdiv);
-    }
+    tbody.appendChild(tr);
   }
+
+  t.appendChild(tbody);
+  wrap.appendChild(t);
+  root.appendChild(wrap);
 }
 
 function render(){
   const wn = isoWeekNumber(state.date);
   const wr = weekRange(state.date);
+
   el("kwLabel").textContent = `KW ${wn.week} / ${wn.year}`;
   el("gapLabel").textContent = String(minGapDays);
   el("rangeLabel").textContent = `${wr.start.toLocaleDateString('de-DE')} – ${wr.end.toLocaleDateString('de-DE')}`;
@@ -556,16 +609,12 @@ function render(){
 
   const q = state.q.trim().toLowerCase();
 
-  el("leftTitle").textContent =
-    state.view === "tour" ? "Tourenansicht" :
-    state.view === "market" ? "Marktansicht" : "Konflikte";
+  el("leftTitle").textContent = (state.view === "conflicts") ? "Konflikte" : "Matrix (Übersicht)";
 
   if (state.view === "conflicts"){
     renderConflicts(plan, q);
-  } else if (state.view === "market"){
-    renderMarkets(q);
   } else {
-    renderTours(plan, q);
+    renderMatrix(plan, q);
   }
 }
 
@@ -614,6 +663,7 @@ init();
 
 def render_html(data: Dict[str, Any]) -> str:
     payload_json = json.dumps(data, ensure_ascii=False)
+    # WICHTIG: kein f-string -> keine {} Probleme
     return HTML_TEMPLATE.replace("__DATA__", payload_json)
 
 
@@ -622,12 +672,17 @@ def render_html(data: Dict[str, Any]) -> str:
 # ----------------------------
 if uploaded:
     try:
-        df = pd.read_excel(uploaded, sheet_name="Direkt 1 - 99", header=None)
+        df = pd.read_excel(uploaded, sheet_name="Direkt", header=None)
     except Exception as e:
         st.error(f"Excel konnte nicht gelesen werden: {e}")
         st.stop()
 
-    data = build_data(df)
+    try:
+        data = build_data(df)
+    except Exception as e:
+        st.error(f"Fehler beim Verarbeiten: {e}")
+        st.stop()
+
     html = render_html(data)
 
     st.success(f"{len(data['markets'])} Märkte geladen. HTML bereit.")
