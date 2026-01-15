@@ -646,7 +646,7 @@ def render_html(data: Dict[str, Any]) -> str:
 # ----------------------------
 if uploaded:
     try:
-        df = pd.read_excel(uploaded, sheet_name="Direkt", header=None)
+        df = pd.read_excel(uploaded, sheet_name="Direkt 1 - 99", header=None)
     except Exception as e:
         st.error(f"Excel konnte nicht gelesen werden: {e}")
         st.stop()
